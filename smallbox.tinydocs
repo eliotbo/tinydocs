@@ -1,0 +1,308 @@
+Crate smallbox
+
+
+
+`Small Box` optimization: store small item on stack and fallback to heap for
+large item.
+
+__________
+
+Usage
+
+
+First, add the following to your `Cargo.toml`:
+
+`[dependencies]
+smallbox = "0.8"`
+
+Next, add this to your crate root:
+
+`extern crate smallbox;`
+
+If you want this crate to work with dynamic-sized type, you can request it via:
+
+`[dependencies]
+smallbox = { version = "0.8", features = ["coerce"] }`
+
+Currently `smallbox` by default links to the standard library, but if you would
+instead like to use this crate in a `#![no_std]` situation or crate, you can
+request this via:
+
+`[dependencies.smallbox]
+version = "0.8"
+features = ["coerce"]
+default-features = false`
+
+
+__________
+
+Feature Flags
+
+
+This crate has the following cargo feature flags:
+
+* `std`
+  
+  * Optional, enabled by default
+  * Use libstd
+  * If `std` feature flag is opted out, `alloc` crate will be linked, which
+    requires nightly rust.
+* `coerce`
+  
+  * Optional
+  * Require nightly rust
+  * Allow automatic coersion from sized `SmallBox` to unsized `SmallBox`.
+
+
+__________
+
+Unsized Type
+
+
+There are two ways to have an unsized `SmallBox`: Using `smallbox!()` macro or
+coercing from a sized `SmallBox` instance.
+
+Using the `smallbox!()` macro is the only option on stable rust. This macro will
+check the types of the expression and the expected type `T`. For any invalid
+type coersions, this macro invokes a compiler error.
+
+Once the feature `coerce` is enabled, sized `SmallBox<T>` can be coerced into
+`SmallBox<T: ?Sized>` if necessary.
+
+__________
+
+Example
+
+
+Eliminate heap alloction for small items by `SmallBox`:
+
+`use smallbox::SmallBox;
+use smallbox::space::S4;
+
+let small: SmallBox<_, S4> = SmallBox::new([0; 2]);
+let large: SmallBox<_, S4> = SmallBox::new([0; 32]);
+
+assert_eq!(small.len(), 2);
+assert_eq!(large.len(), 32);
+
+assert_eq!(*small, [0; 2]);
+assert_eq!(*large, [0; 32]);
+
+assert!(small.is_heap() == false);
+assert!(large.is_heap() == true);`
+
+
+### Unsized type
+
+Construct with `smallbox!()` macro:
+
+`#[macro_use]
+extern crate smallbox;
+
+use smallbox::SmallBox;
+use smallbox::space::*;
+
+let array: SmallBox<[usize], S2> = smallbox!([0usize, 1]);
+
+assert_eq!(array.len(), 2);
+assert_eq!(*array, [0, 1]);`
+
+With `coerce` feature:
+
+`use smallbox::SmallBox;
+use smallbox::space::*;
+  
+let array: SmallBox<[usize], S2> = SmallBox::new([0usize, 1]);
+
+assert_eq!(array.len(), 2);
+assert_eq!(*array, [0, 1]);`
+
+`Any` downcasting:
+
+`#[macro_use]
+extern crate smallbox;
+
+use std::any::Any;
+use smallbox::SmallBox;
+use smallbox::space::S2;
+
+let num: SmallBox<dyn Any, S2> = smallbox!(1234u32);
+
+if let Some(num) = num.downcast_ref::<u32>() {
+    assert_eq!(*num, 1234);
+} else {
+    unreachable!();
+}`
+
+
+__________
+
+Capacity
+
+
+The capacity is expressed by the size of type parameter `Space`, regardless of
+what actually the `Space` is.
+
+The crate provides some spaces in module `smallbox::space`, from `S1`, `S2`,
+`S4` to `S64`, representing `"n * usize"` spaces.
+
+Anyway, you can defind your own space type such as byte array `[u8; 64]`. Please
+note that the space alignment is also important. If the alignment of the space
+is smaller than the alignment of the value, the value will be stored in the
+heap.
+
+
+__________
+
+Modules
+
+
+space
+
+Space types that is used to define capacity
+
+
+__________
+
+Macros
+
+
+smallbox
+
+Box value on stack or on heap depending on its size
+
+
+__________
+
+Structs
+
+
+SmallBox
+
+An optimized box that store value on stack or on heap depending on its size
+
+
+
+
+==============
+Macro smallbox::smallbox
+
+`macro_rules! smallbox {
+    ($e : expr) => { ... };
+}`
+
+
+Box value on stack or on heap depending on its size
+
+This macro is similar to `SmallBox::new`, which is used to create a new
+`Smallbox` instance, but relaxing the constraint `T: Sized`. In order to do
+that, this macro will check the coersion rules from type `T` to the target type.
+This macro will invoke a complie-time error on any invalid type coersion.
+
+You can think that it has the signature of `smallbox!<U: Sized, T: ?Sized>(val:
+U) -> SmallBox<T, Space>`
+
+__________
+
+Example
+
+
+`#[macro_use]
+extern crate smallbox;
+
+use smallbox::SmallBox;
+use smallbox::space::*;
+
+let small: SmallBox<[usize], S4> = smallbox!([0usize; 2]);
+let large: SmallBox<[usize], S4> = smallbox!([1usize; 8]);
+
+assert_eq!(small.len(), 2);
+assert_eq!(large[7], 1);
+
+assert!(large.is_heap() == true);`
+
+
+
+
+==============
+Struct smallbox::space::S1
+
+`pub struct S1 { /* fields omitted */ }`
+Represent 1 * usize space
+__________
+
+
+
+
+==============
+Struct smallbox::space::S16
+
+`pub struct S16 { /* fields omitted */ }`
+Represent 16 * usize space
+__________
+
+
+
+
+==============
+Struct smallbox::space::S2
+
+`pub struct S2 { /* fields omitted */ }`
+Represent 2 * usize space
+__________
+
+
+
+
+==============
+Struct smallbox::space::S32
+
+`pub struct S32 { /* fields omitted */ }`
+Represent 32 * usize space
+__________
+
+
+
+
+==============
+Struct smallbox::space::S4
+
+`pub struct S4 { /* fields omitted */ }`
+Represent 4 * usize space
+__________
+
+
+
+
+==============
+Struct smallbox::space::S64
+
+`pub struct S64 { /* fields omitted */ }`
+Represent 64 * usize space
+__________
+
+
+
+
+==============
+Struct smallbox::space::S8
+
+`pub struct S8 { /* fields omitted */ }`
+Represent 8 * usize space
+__________
+
+
+
+
+==============
+Struct smallbox::SmallBox
+
+`pub struct SmallBox<T: ?Sized, Space> { /* fields omitted */ }`
+An optimized box that store value on stack or on heap depending on its size
+__________
+__________
+
+IMPLEMENTATIONS:
+[src]
+
+### impl<T: ?Sized, Space> SmallBox<T, Space>
