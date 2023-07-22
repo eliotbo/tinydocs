@@ -82,6 +82,7 @@ use tiktoken_rs::cl100k_base;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn StdError>> {
+    dotenv::dotenv().ok();
     // let url = "https://docs.rs/iced/latest/iced/all.html";
     let url = "https://docs.rs/smallbox/latest/smallbox/all.html";
 
@@ -89,7 +90,7 @@ async fn main() -> Result<(), Box<dyn StdError>> {
 
     println!("tiny_docs: {:?}", tiny_doc[7]);
 
-    let embeddings = embed(tiny_doc).await?;
+    let embeddings = embed_doc(tiny_doc).await?;
 
     Ok(())
 }
@@ -106,6 +107,107 @@ struct Embedding {
     token_count: usize,
 }
 
+// compute vector similarity using the cosine similarity
+fn cosine_similarity(a: &[f64], b: &[f64]) -> f64 {
+    let dot_product = a.iter().zip(b).map(|(a, b)| a * b).sum::<f64>();
+    let norm_a = a.iter().map(|a| a * a).sum::<f64>().sqrt();
+    let norm_b = b.iter().map(|b| b * b).sum::<f64>().sqrt();
+    dot_product / (norm_a * norm_b)
+}
+
+fn order_by_similarity(embeddings: Vec<Embedding>) -> Vec<Embedding> {
+    let mut embeddings = embeddings;
+
+    embeddings.sort_by(|a, b| {
+        let a = &a.data;
+        let b = &b.data;
+
+        let a = a.as_slice();
+        let b = b.as_slice();
+
+        let similarity = cosine_similarity(a, b);
+
+        // println!("similarity: {}", similarity);
+
+        similarity.partial_cmp(&0.0).unwrap()
+    });
+
+    embeddings
+}
+
+// // For the top 10 most similar embeddings, check if the words from the prompt are present in the
+// // embedding plain text.
+// fn check_exact_matches(embeddings: Vec<Embedding>, prompt: &str) -> Vec<Embedding> {
+//     let mut embeddings = embeddings;
+
+//     let mut prompt_words = prompt.split_whitespace().collect::<Vec<&str>>();
+
+//     // remove the first word from the prompt
+//     prompt_words.remove(0);
+
+//     let mut prompt_words = prompt_words
+//         .iter()
+//         .map(|x| x.to_lowercase())
+//         .collect::<Vec<String>>();
+
+//     // println!("prompt_words: {:?}", prompt_words);
+
+//     let mut embeddings_with_exact_matches = Vec::new();
+
+//     for embedding in embeddings {
+//         let mut matches = 0;
+
+//         for word in &prompt_words {
+//             if embedding.data.contains(&word) {
+//                 matches += 1;
+//             }
+//         }
+
+//         if matches >= 2 {
+//             embeddings_with_exact_matches.push(embedding);
+//         }
+//     }
+
+//     embeddings_with_exact_matches
+// }
+
+async fn embed_request(s: &str) -> Result<Vec<f64>, Box<dyn StdError>> {
+    let oai_token: String = env::var("OPENAI_API_KEY").expect("OAT_TOKEN must be set");
+
+    let bearer = format!("Bearer {}", oai_token);
+
+    println!("oai_token: {}", bearer);
+
+    let mut headers = HeaderMap::new();
+
+    headers.insert(AUTHORIZATION, HeaderValue::from_str(&bearer)?);
+    headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+
+    let client = Client::builder().default_headers(headers).build()?;
+
+    let body = json!({
+        "input": s,
+        "model": "text-embedding-ada-002"
+    });
+
+    let resp = client
+        .post("https://api.openai.com/v1/embeddings")
+        .json(&body)
+        .send()
+        .await?;
+
+    let response_body: serde_json::Value = resp.json().await?;
+
+    let data: Vec<f64> = response_body["data"][0]["embedding"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|x| x.as_f64().unwrap())
+        .collect();
+
+    Ok(data)
+}
+
 pub fn extract_second_word(s: &str) -> Result<&str, Box<dyn StdError>> {
     let mut words = s.split_whitespace();
     let _ = words
@@ -114,8 +216,7 @@ pub fn extract_second_word(s: &str) -> Result<&str, Box<dyn StdError>> {
     words.next().ok_or("No second word found".into())
 }
 
-async fn embed(tiny_doc: Vec<String>) -> Result<Vec<Embedding>, Box<dyn StdError>> {
-    dotenv::dotenv().ok();
+async fn embed_doc(tiny_doc: Vec<String>) -> Result<Vec<Embedding>, Box<dyn StdError>> {
     let oai_token: String = env::var("OPENAI_API_KEY").expect("OAT_TOKEN must be set");
 
     let bearer = format!("Bearer {}", oai_token);
@@ -131,7 +232,7 @@ async fn embed(tiny_doc: Vec<String>) -> Result<Vec<Embedding>, Box<dyn StdError
 
     let bpe = cl100k_base().unwrap();
     let token_count = bpe.encode_with_special_tokens(&tiny_doc.join(" ")).len();
-    println!("Token count: {}", token_count);
+    println!("\nToken count: {}", token_count);
 
     print!("Would you like to continue? (y/n): ");
     io::stdout().flush()?; // Make sure the question gets printed immediately
@@ -174,8 +275,10 @@ async fn embed(tiny_doc: Vec<String>) -> Result<Vec<Embedding>, Box<dyn StdError
             .map(|x| x.as_f64().unwrap())
             .collect();
 
+        println!("dim: {}", data.len());
+
         let token_count = bpe.encode_with_special_tokens(&input_string).len();
-        println!("Token count: {}", token_count);
+        // println!("Entry token count: {}", token_count);
 
         let embedding = Embedding {
             index,
@@ -183,7 +286,7 @@ async fn embed(tiny_doc: Vec<String>) -> Result<Vec<Embedding>, Box<dyn StdError
             token_count,
         };
 
-        println!("\n\nindex_embedding: {:?}", &embedding.index);
+        // println!("\n\nindex_embedding: {:?}", &embedding.index);
 
         embeddings.push(embedding);
     }
@@ -191,8 +294,6 @@ async fn embed(tiny_doc: Vec<String>) -> Result<Vec<Embedding>, Box<dyn StdError
     println!("length: {:?}", &embeddings.len());
 
     Ok(embeddings)
-
-    // Ok(Vec::new())
 }
 
 fn extract_root_url(url_str: &str) -> Result<String, Box<dyn StdError>> {
